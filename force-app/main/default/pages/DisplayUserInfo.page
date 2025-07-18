@@ -1,0 +1,7 @@
+<apex:page >
+    <apex:pageBlock title="DisplayUserInfo">
+    
+    {! $User.FirstName}
+    
+    </apex:pageBlock>
+</apex:page>

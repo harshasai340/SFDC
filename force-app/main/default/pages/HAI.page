@@ -1,0 +1,41 @@
+<apex:page lightningStylesheets="true" >
+  <!-- Begin Default Content REMOVE THIS -->
+  <h1>Congratulations</h1>
+  This is your new Page
+  <!-- End Default Content REMOVE THIS -->
+  <html>
+  <head>
+  <title>
+  NEW TABLE
+  </title>
+  <style type = "text/css">
+  table {background-color:Yellow}
+  th {color:blue}
+  </style>
+  </head>
+  <body>
+  <h1>TABLE </h1>
+  <table border="2">
+      <tr>
+           <th> S.No</th>
+           <th> S.Name</th>
+            <th> Contact</th>
+       </tr>
+       
+       <tr>
+       <td> 1 </td>
+       <td> Harsha</td>
+       <td> 9542554790 </td>
+         </tr>
+  
+  
+   <tr>
+       <td> 2 </td>
+       <td> pavan</td>
+       <td> 8185044091</td>
+         </tr>
+           
+         </table>
+         </body>
+         </html>
+</apex:page>

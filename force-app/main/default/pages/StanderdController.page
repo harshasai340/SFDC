@@ -1,0 +1,16 @@
+<apex:page standardController="Account">
+    <apex:form >
+        <apex:pageBlock >
+        <apex:image id="Deloitte" value="{!$Resource.Deloitte}"/>
+            <apex:pageBlockSection >Name</apex:pageBlockSection>
+        <apex:inputField value="{!Account.Name}"/>
+            <apex:pageBlockSection >Website</apex:pageBlockSection>
+    <apex:inputField value="{!Account.Website}"/>
+                <apex:pageBlockSection >Fax</apex:pageBlockSection>
+    <apex:inputField value="{!Account.Fax}"/>
+        <apex:commandButton value="save" action="{!save}"/>
+        </apex:pageBlock>
+    
+    </apex:form>
+
+</apex:page>

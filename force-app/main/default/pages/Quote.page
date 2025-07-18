@@ -1,0 +1,60 @@
+<!--Page Name: 
+*---------------------------------------------------------------------------------------------
+*Developer              Date            User Story              Description
+*---------------------------------------------------------------------------------------------
+*Khayam                 4/27/2020          -                   Initial version created                                                                         
+*
+*-->
+<apex:page standardController="Opportunity" showHeader="false" standardStylesheets="false" sidebar="false" applyHtmlTag="false" applyBodyTag="false" docType="html-5.0">
+<html xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<head>
+    <meta charset="utf-8" />
+  <meta http-equiv="x-ua-compatible" content="ie=edge" />
+  <title>Quote Line Delete</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+<apex:slds />
+</head>
+<body>
+    <div class="slds-scope">
+        <div class="alertDialog" style="height: 640px;">
+                <section role="dialog" tabindex="-1" aria-labelledby="modal-heading-01" aria-modal="true" aria-describedby="modal-content-id-1" class="slds-modal slds-fade-in-open">
+                    <div class="slds-modal__container">
+                        <header class="slds-modal__header">
+                            <h2 id="modal-heading-01" class="slds-text-heading_medium slds-hyphenate"> Alert </h2>
+                        </header>
+                        <div class="slds-modal__content slds-p-around_medium" id="modal-content-id-1">
+                            <div class="slds-notify slds-notify_alert slds-theme_alert-texture slds-theme_error" role="alert">
+                                <span class="slds-icon_container slds-icon-utility-ban slds-m-right_x-small" title="error">
+                                <svg aria-hidden="true" class="slds-icon">
+                                    <use xlink:href="{!URLFOR($Asset.SLDS, '/assets/icons/utility-sprite/svg/symbols.svg#ban')}"></use>
+                                </svg>
+                                </span>
+                                <h3>{Create from opportunity}</h3>
+                            </div>
+                        </div>
+                        <footer class="slds-modal__footer">
+                            <button class="slds-button slds-button_neutral" onclick="closePage()">OK</button>
+                           
+                        </footer>
+                    </div>
+                </section>
+                <div class="slds-backdrop slds-backdrop_open"></div>
+            </div>    
+        
+
+    </div>
+ <script>
+        function closePage(){
+            if ((typeof sforce != 'undefined') && (sforce != null)) {
+                sforce.one.navigateToSObject('{!Opportunity}');
+            } else {
+                var Id = '{!$CurrentPage.Parameters.retURL}';
+                window.location.href = '{!$Site.BaseUrl}'+Id;
+            }
+        }
+    </script>
+
+</body>
+</html>
+</apex:page>
