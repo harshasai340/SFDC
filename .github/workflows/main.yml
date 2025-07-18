@@ -1,4 +1,4 @@
-name: Salesforce Delta Deployment (JWT)
+name: Salesforce Delta Deployment
 
 on:
   push:
@@ -8,85 +8,68 @@ on:
 
 env:
   SFDX_CLI_VERSION: latest
-  SCRATCH_ORG_EXPIRE_DAYS: 1
 
 jobs:
-  delta-deployment:
+  deploy:
     name: Delta Deployment
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        org: [dev, staging, prod]
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0  # Required for delta detection
+          fetch-depth: 0  # Required for git diff
 
       - name: Setup Salesforce CLI
         uses: salesforce-actions/setup-sfdx@v1
         with:
           sfdx-cli-version: ${{ env.SFDX_CLI_VERSION }}
 
-      - name: Authenticate via JWT to ${{ matrix.org }}
+      - name: Authenticate to Salesforce
         run: |
-          echo "${{ secrets[format('SF_{0}_JWT_KEY', matrix.org)] }}" > server.key
+          echo "${{ secrets.SF_JWT_KEY }}" > server.key
           sfdx auth:jwt:grant \
-            --clientid ${{ secrets[format('SF_{0}_CONSUMER_KEY', matrix.org)] }} \
+            --clientid ${{ secrets.SF_CONSUMER_KEY }} \
             --jwtkeyfile server.key \
-            --username ${{ secrets[format('SF_{0}_USERNAME', matrix.org)] }} \
-            --instanceurl ${{ secrets[format('SF_{0}_INSTANCE_URL', matrix.org)] }} \
-            --setalias ${{ matrix.org }}
+            --username ${{ secrets.SF_USERNAME }} \
+            --instanceurl ${{ secrets.SF_INSTANCE_URL }} \
+            --setalias my-org
 
       - name: Get changed files
         id: changed-files
-        uses: tj-actions/changed-files@v34
-        with:
-          since_last_remote_commit: true
-
-      - name: Filter Salesforce components
-        id: filter-components
         run: |
-          # Filter only files in force-app directory with valid extensions
-          CHANGED_SF_FILES=$(echo "${{ steps.changed-files.outputs.all_changed_files }}" | \
-            grep -E 'force-app/.*\.(cls|page|component|trigger|object|flow|layout|permissionset|profile|labels|resource|js|css|xml)$')
-
-          # Exit if no Salesforce files changed
-          if [ -z "$CHANGED_SF_FILES" ]; then
-            echo "No Salesforce components changed - skipping deployment"
+          # Get files changed between current and previous commit
+          CHANGED_FILES=$(git diff --name-only HEAD^ HEAD -- force-app/)
+          
+          # Filter only Salesforce metadata files
+          FILTERED_FILES=$(echo "$CHANGED_FILES" | grep -E '\.(cls|trigger|page|component|object|flow|layout|profile|permissionset|xml)$')
+          
+          echo "Changed files:"
+          echo "$FILTERED_FILES"
+          
+          # Set output for next steps
+          if [ -z "$FILTERED_FILES" ]; then
             echo "::set-output name=has_changes::false"
+            echo "No Salesforce files changed - skipping deployment"
           else
-            echo "Changed files to deploy:"
-            echo "$CHANGED_SF_FILES"
-            echo "::set-output name=changed_files::$CHANGED_SF_FILES"
+            echo "::set-output name=file_list::$FILTERED_FILES"
             echo "::set-output name=has_changes::true"
           fi
 
-      - name: Validate delta deployment to ${{ matrix.org }}
-        if: steps.filter-components.outputs.has_changes == 'true' && github.event_name == 'pull_request'
+      - name: Validate Changes (PR)
+        if: github.event_name == 'pull_request' && steps.changed-files.outputs.has_changes == 'true'
         run: |
           sfdx force:source:deploy \
             --checkonly \
-            --sourcepath "${{ steps.filter-components.outputs.changed_files }}" \
-            --targetusername ${{ matrix.org }} \
+            --sourcepath "${{ steps.changed-files.outputs.file_list }}" \
+            --targetusername my-org \
             --testlevel RunLocalTests \
             --wait 30
 
-      - name: Deploy delta to ${{ matrix.org }}
-        if: steps.filter-components.outputs.has_changes == 'true' && github.event_name == 'push' && (matrix.org == 'dev' || matrix.org == 'staging')
+      - name: Deploy Changes (Push to Main)
+        if: github.event_name == 'push' && steps.changed-files.outputs.has_changes == 'true'
         run: |
           sfdx force:source:deploy \
-            --sourcepath "${{ steps.filter-components.outputs.changed_files }}" \
-            --targetusername ${{ matrix.org }} \
+            --sourcepath "${{ steps.changed-files.outputs.file_list }}" \
+            --targetusername my-org \
             --testlevel RunLocalTests \
             --wait 30
-
-      - name: Deploy delta to Prod (Manual Approval)
-        if: steps.filter-components.outputs.has_changes == 'true' && github.event_name == 'push' && matrix.org == 'prod'
-        uses: salesforce-actions/deploy@v1
-        with:
-          target-org: ${{ matrix.org }}
-          source-dir: "${{ steps.filter-components.outputs.changed_files }}"
-          test-level: RunLocalTests
-        env:
-          SFDX_AUTH_URL: ${{ secrets.SF_PROD_AUTH_URL }}
