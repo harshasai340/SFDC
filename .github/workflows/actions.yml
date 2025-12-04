@@ -1,0 +1,160 @@
+# GitHub Actions Salesforce Deployment Pipelines
+name: Deploy Salesforce Code
+
+on:
+  push:
+    branches:
+      - develop
+      - acc-github-pipelines
+  pull_request:
+    branches:
+      - develop
+
+jobs:
+  deployment:
+    name: Deploy Salesforce Code
+    runs-on:
+      group: 'Concordia-WestUS3'
+      labels: 'concordia-linux-cpu2-ram7gi'
+    
+    steps:        
+      # Checkout repositories
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 4
+
+      # Create deployment directory
+      - name: Create deployment build directory
+        run: |
+          echo "⚡️⚡️⚡️ Creating Deployment folder up..... ⚡️⚡️⚡️"
+          mkdir -p /tmp/deployment
+          ls -ltr /tmp/deployment
+          echo "#######################"
+          ls -ltr
+          echo "#######################"
+
+      # Set target branch
+      - name: Set target branch variable
+        id: set-target-branch
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            target_branch="${{ github.event.pull_request.base.ref }}"
+          else
+            target_branch="develop"
+          fi
+          echo "target-branch=$target_branch" >> $GITHUB_OUTPUT
+          echo "TARGET_BRANCH=$target_branch" >> $GITHUB_ENV
+
+      # Get delta mode
+      - name: Determine delta mode
+        id: set-delta-mode
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ] && [ "${{ github.repository }}" = "ATT-DP1/apm0013668-acc_github_actions_cicd" ]; then
+            mode="pr"
+          else
+            mode="commit"
+          fi
+          echo "delta-mode=$mode" >> $GITHUB_OUTPUT
+          echo "DELTA_MODE=$mode" >> $GITHUB_ENV
+      
+      # Installing NODE
+      - name: Install Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: "20.5.0"
+        
+      # Installing Salesforce CLI
+      - name: Install Salesforce CLI
+        run: |
+          npm install -g @salesforce/cli@2.49.7
+          sf --version
+
+      # SFDC Authorization
+      - name: Authorize SFDC org
+        run: |
+          ./scripts/auth.sh "${{ secrets.SALESFORCE_CLIENT_ID }}" \
+            "${{ secrets.SALESFORCE_CLIENT_SECRET }}" \
+            "${{ inputs.sf_target_org || 'ghprelease' }}" \
+            "${{ secrets.SALESFORCE_CRED }}"
+
+      # Get deployment delta
+      - name: Get delta
+        run: |
+          set -x
+          echo "PWD: $(pwd)"
+          echo "⚡️⚡️⚡️ deltamode: ${{ env.DELTA_MODE }} ⚡️⚡️⚡️"
+          ./scripts/sfdelta.sh \
+            "${{ github.ref }}" \
+            "${{ env.TARGET_BRANCH }}" \
+            "${{ env.DELTA_MODE }}"
+
+      # Check test classes
+      - name: Check Test Classes
+        id: test-class-details
+        run: |
+          test_classes=""
+          build_dir="/tmp/deployment"
+          
+          # Check and search in classes folder if it exists
+          if [ -d "${build_dir}/force-app/main/default/classes" ]; then
+              test_classes=$(find ${build_dir}/force-app/main/default/classes -iname "*Test.cls" ! -name "*-meta.xml" -exec basename {} .cls \; | paste -sd " " -)
+          fi
+          
+          # Check and search in triggers folder if it exists
+          if [ -d "${build_dir}/force-app/main/default/triggers" ]; then
+              triggers_tests=$(find ${build_dir}/force-app/main/default/triggers -iname "*Test.trigger" ! -name "*-meta.xml" -exec basename {} .trigger \; | paste -sd " " -)
+              if [[ -n "$triggers_tests" ]]; then
+                  test_classes="$test_classes $triggers_tests"
+              fi
+          fi
+          
+          echo "test-classes=$test_classes" >> $GITHUB_OUTPUT
+          echo "TEST_CLASSES=$test_classes" >> $GITHUB_ENV
+          echo "TEST CLASSES: ${test_classes}"
+
+      # Generate Salesforce manifest
+      - name: Generate Salesforce manifest
+        id: generate-manifest
+        continue-on-error: false
+        run: |
+          echo "⚡️⚡️⚡️ Generate salesforce manifest ⚡️⚡️⚡️"
+          set -x
+          cp sfdx-project.json /tmp/deployment/sfdx-project.json
+          cd /tmp/deployment/
+          sf project generate manifest --source-dir force-app --name package.xml --output-dir manifest > ${{ runner.temp }}/manifest_generation.log 2>&1
+          manifest_status=$?
+          if [ $manifest_status -ne 0 ]; then
+            echo "Manifest generation failed with status: $manifest_status" >> ${{ runner.temp }}/manifest_generation.log
+            echo "manifest-generation-status=failed" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          echo "Generated manifest:"
+          cat manifest/package.xml
+
+      # Validate Salesforce manifest
+      - name: Validate Salesforce manifest
+        id: validate-manifest
+        continue-on-error: false
+        run: |
+          echo "⚡️⚡️⚡️ Validating Salesforce manifest..... ⚡️⚡️⚡️"
+          set -e
+          ./scripts/validate.sh \
+            "${{ inputs.sf_target_org || 'ghprelease' }}" \
+            "${{ runner.temp }}"
+
+      # Deploy Salesforce manifest (only for non-PR runs)
+      - name: Deploy Salesforce manifest
+        id: deploy-manifest
+        if: github.event_name != 'pull_request'
+        continue-on-error: false
+        run: |
+          echo "⚡️⚡️⚡️ deployID: ${{ env.DEPLOY_ID }} ⚡️⚡️⚡️"
+          echo "⚡️⚡️⚡️ tests_classes: ${{ env.TEST_CLASSES }} ⚡️⚡️⚡️"
+          ./scripts/deploy.sh \
+            "${{ inputs.sf_target_org || 'ghprelease' }}" \
+            "${{ env.DEPLOY_ID }}" \
+            "${{ runner.temp }}" \
+            "${{ env.TEST_CLASSES }}"
+
+  
