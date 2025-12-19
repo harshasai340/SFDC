@@ -1,0 +1,177 @@
+name: Deploy Salesforce Code to QA
+
+on:
+  push:
+    branches:
+      - develop
+  pull_request:
+    branches:
+      - develop
+
+jobs:
+  deployment:
+    name: Deploy Salesforce Code
+    runs-on:
+      group: 'Concordia-WestUS3'
+      labels: 'concordia-linux-cpu2-ram7gi'
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # IMPORTANT: full history for delta
+
+      - name: Install prerequisites (jq, bc, awk)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq bc gawk
+
+      - name: Fetch all branches
+        run: git fetch --all --prune
+
+      # Debug: List repo files after checkout
+      - name: List repository files after checkout
+        run: |
+          echo "Contents of force-app/main/default after checkout:"
+          ls -lR force-app/main/default || echo "No such directory"
+
+      # Debug: Show git diff for push events
+      - name: Print git diff for debugging
+        if: github.event_name == 'push'
+        run: |
+          echo "Comparing HEAD and HEAD~1"
+          git diff --name-status HEAD~1 HEAD
+
+      # Set target branch for PRs or default to develop
+      - name: Set target branch variable
+        id: set-target-branch
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            target_branch="${{ github.event.pull_request.base.ref }}"
+          else
+            target_branch="develop"
+          fi
+          echo "target-branch=$target_branch" >> $GITHUB_OUTPUT
+          echo "TARGET_BRANCH=$target_branch" >> $GITHUB_ENV
+
+      - name: Install Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: "20.5.0"
+
+      - name: Install legacy Salesforce SFDX CLI
+        run: |
+          npm install --global sfdx-cli@7.209.2
+          sfdx --version
+
+      - name: Install sfdx-git-delta plugin
+        run: |
+          sfdx plugins:install sfdx-git-delta
+          sfdx plugins --core
+
+      - name: Authorize SFDC org
+        run: |
+          ./scripts/auth.sh "${{ secrets.SALESFORCE_CLIENT_ID1 }}" \
+            "${{ secrets.SALESFORCE_CLIENT_SECRET1 }}" \
+            "${{ inputs.sf_target_org || 'ghpdevint' }}" \
+            "${{ secrets.SALESFORCE_CRED }}"
+
+      - name: Create deployment build directory
+        run: mkdir -p /tmp/deployment/changed
+
+      - name: Generate delta package using sfdx-git-delta
+        run: |
+          # Use HEAD~1 for pushes, PR base for pull requests
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            FROM_REF="origin/${{ env.TARGET_BRANCH }}"
+          else
+            FROM_REF="HEAD~1"
+          fi
+          echo "Generating delta from $FROM_REF to HEAD"
+          sfdx sgd:source:delta --to HEAD --from $FROM_REF --output /tmp/deployment/changed --generate-delta
+          echo "Delta package generated at /tmp/deployment/changed"
+
+      # Debug: List delta output directory
+      - name: List delta output for debugging
+        run: |
+          echo "Delta directory contents:"
+          ls -lR /tmp/deployment/changed || echo "Delta directory does not exist"
+          if [ -f /tmp/deployment/changed/package/package.xml ]; then
+            echo "package.xml contents:"
+            cat /tmp/deployment/changed/package/package.xml
+          else
+            echo "No delta package.xml"
+          fi
+
+      - name: Check Test Classes
+        id: test-class-details
+        run: |
+          test_classes=""
+          build_dir="/tmp/deployment/changed"
+          if [ -d "${build_dir}/force-app/main/default/classes" ]; then
+              test_classes=$(find ${build_dir}/force-app/main/default/classes -iname "*Test.cls" ! -name "*-meta.xml" -exec basename {} .cls \; | paste -sd " " -)
+          fi
+          if [ -d "${build_dir}/force-app/main/default/triggers" ]; then
+              triggers_tests=$(find ${build_dir}/force-app/main/default/triggers -iname "*Test.trigger" ! -name "*-meta.xml" -exec basename {} .trigger \; | paste -sd " " -)
+              if [[ -n "$triggers_tests" ]]; then
+                  test_classes="$test_classes $triggers_tests"
+              fi
+          fi
+          echo "test-classes=$test_classes" >> $GITHUB_OUTPUT
+          echo "TEST_CLASSES=$test_classes" >> $GITHUB_ENV
+
+      - name: Check if deployment content exists
+        id: has-deployment-content
+        run: |
+          build_dir="/tmp/deployment/changed/force-app/main/default"
+          if [ -d "$build_dir" ]; then
+            count=$(find "$build_dir" -type f | wc -l)
+          else
+            count=0
+          fi
+          echo "Found $count files in $build_dir"
+          if [ "$count" -gt 0 ]; then
+            echo "has_content=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_content=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate Salesforce manifest (including all metadata)
+        id: generate-manifest
+        if: steps.has-deployment-content.outputs.has_content == 'true'
+        run: |
+          cp sfdx-project.json /tmp/deployment/changed/sfdx-project.json
+          cd /tmp/deployment/changed/
+          sfdx force:source:manifest:create -r force-app -x manifest/package.xml
+          manifest_status=$?
+          if [ $manifest_status -ne 0 ]; then
+            echo "Manifest generation failed. Check that all components in force-app are present and named correctly."
+            exit 1
+          fi
+          cat manifest/package.xml
+
+      - name: Validate Salesforce manifest
+        id: validate-manifest
+        if: |
+          (github.event_name == 'pull_request' &&
+            (github.base_ref == 'develop' || github.base_ref == 'main') &&
+            steps.has-deployment-content.outputs.has_content == 'true')
+          ||
+          (github.event_name != 'pull_request' && steps.has-deployment-content.outputs.has_content == 'true')
+        run: |
+          ./scripts/validate.sh \
+            "${{ inputs.sf_target_org || 'ghpdevint' }}" \
+            "/tmp/deployment/changed"
+
+      - name: Deploy Salesforce manifest
+        id: deploy-manifest
+        if: github.event_name != 'pull_request' && steps.has-deployment-content.outputs.has_content == 'true'
+        run: |
+          echo "===== Delta manifest/package.xml for Main Deployment ====="
+          cat /tmp/deployment/changed/manifest/package.xml
+          echo "=========================================================="
+          ./scripts/deploy.sh \
+            "${{ inputs.sf_target_org || 'ghpdevint' }}" \
+            "${{ env.DEPLOY_ID }}" \
+            "/tmp/deployment/changed" \
+            "${{ env.TEST_CLASSES }}"
