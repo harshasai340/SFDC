@@ -1,0 +1,20 @@
+Run build_dir="/tmp/deployment/changed/force-app/main/default"
+  build_dir="/tmp/deployment/changed/force-app/main/default"
+  if [ -d "$build_dir" ]; then
+    count=$(find "$build_dir" -type f | wc -l)
+  else
+    count=0
+  fi
+  echo "Found $count files in $build_dir"
+  if [ "$count" -gt 0 ]; then
+    echo "has_content=true" >> $GITHUB_OUTPUT
+  else
+    echo "has_content=false" >> $GITHUB_OUTPUT
+  fi
+  shell: /usr/bin/bash -e {0}
+  env:
+    TARGET_BRANCH: develop
+    SF_ACCESS_TOKEN: 00DE200000JTiSY!AQEAQH4dAI2l7iCF7I5zaYhxhOyiwJzZmUZoTVjgnP9T9d1iFNdlCM4QuhV_j93rBkOl4erJzWlsVmiaqC4qHAFRfmWywzcg
+    SF_INSTANCE_URL: https://attone--ghpdevint.sandbox.my.salesforce.com
+    TEST_CLASSES: 
+Found 0 files in /tmp/deployment/changed/force-app/main/default
